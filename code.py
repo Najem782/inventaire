@@ -1,28 +1,32 @@
-# inventory_app.py
 import streamlit as st
 import pandas as pd
 from datetime import date
+from pathlib import Path
 
-# Load or create data
-@st.cache_data
-def load_data():
-    try:
-        purchases = pd.read_csv("purchases.csv")
-        sales = pd.read_csv("sales.csv")
-        expenses = pd.read_csv("expenses.csv")
-    except FileNotFoundError:
-        purchases = pd.DataFrame(columns=["Date", "Item", "Quantity", "UnitPrice", "Total"])
-        sales = pd.DataFrame(columns=["Date", "Item", "Quantity", "SellingPrice", "Total"])
-        expenses = pd.DataFrame(columns=["Date", "Category", "Amount"])
-    return purchases, sales, expenses
+# --- Initialize persistent data using session_state ---
+def load_or_create(filename, columns):
+    path = Path(filename)
+    if path.exists():
+        return pd.read_csv(path)
+    else:
+        return pd.DataFrame(columns=columns)
 
-def save_data(purchases, sales, expenses):
-    purchases.to_csv("purchases.csv", index=False)
-    sales.to_csv("sales.csv", index=False)
-    expenses.to_csv("expenses.csv", index=False)
+if "purchases" not in st.session_state:
+    st.session_state["purchases"] = load_or_create("purchases.csv", ["Date", "Item", "Quantity", "UnitPrice", "Total"])
 
-purchases, sales, expenses = load_data()
+if "sales" not in st.session_state:
+    st.session_state["sales"] = load_or_create("sales.csv", ["Date", "Item", "Quantity", "SellingPrice", "Total"])
 
+if "expenses" not in st.session_state:
+    st.session_state["expenses"] = load_or_create("expenses.csv", ["Date", "Category", "Amount"])
+
+def save_all():
+    st.session_state["purchases"].to_csv("purchases.csv", index=False)
+    st.session_state["sales"].to_csv("sales.csv", index=False)
+    st.session_state["expenses"].to_csv("expenses.csv", index=False)
+
+# --- Streamlit UI ---
+st.set_page_config(page_title="Inventory Tracker", layout="wide")
 st.sidebar.title("Inventory Tracker")
 page = st.sidebar.radio("Navigate", ["Purchases", "Sales", "Expenses", "Reports"])
 
@@ -33,13 +37,15 @@ if page == "Purchases":
     qty = st.number_input("Quantity", min_value=0.0, step=0.1)
     price = st.number_input("Unit price", min_value=0.0, step=0.1)
     if st.button("Add Purchase"):
-        total = qty * price
-        new_row = pd.DataFrame([[date.today(), item, qty, price, total]],
-                               columns=purchases.columns)
-        purchases = pd.concat([purchases, new_row], ignore_index=True)
-        save_data(purchases, sales, expenses)
-        st.success("Purchase recorded.")
-    st.dataframe(purchases)
+        if item and qty > 0 and price > 0:
+            new_row = pd.DataFrame([[date.today(), item, qty, price, qty * price]],
+                                   columns=st.session_state["purchases"].columns)
+            st.session_state["purchases"] = pd.concat([st.session_state["purchases"], new_row], ignore_index=True)
+            save_all()
+            st.success("Purchase recorded.")
+        else:
+            st.warning("Please fill all fields correctly.")
+    st.dataframe(st.session_state["purchases"])
 
 # --- Sales Page ---
 elif page == "Sales":
@@ -48,13 +54,15 @@ elif page == "Sales":
     qty = st.number_input("Quantity sold", min_value=0.0, step=0.1)
     price = st.number_input("Selling price", min_value=0.0, step=0.1)
     if st.button("Add Sale"):
-        total = qty * price
-        new_row = pd.DataFrame([[date.today(), item, qty, price, total]],
-                               columns=sales.columns)
-        sales = pd.concat([sales, new_row], ignore_index=True)
-        save_data(purchases, sales, expenses)
-        st.success("Sale recorded.")
-    st.dataframe(sales)
+        if item and qty > 0 and price > 0:
+            new_row = pd.DataFrame([[date.today(), item, qty, price, qty * price]],
+                                   columns=st.session_state["sales"].columns)
+            st.session_state["sales"] = pd.concat([st.session_state["sales"], new_row], ignore_index=True)
+            save_all()
+            st.success("Sale recorded.")
+        else:
+            st.warning("Please fill all fields correctly.")
+    st.dataframe(st.session_state["sales"])
 
 # --- Expenses Page ---
 elif page == "Expenses":
@@ -62,28 +70,35 @@ elif page == "Expenses":
     cat = st.selectbox("Category", ["Employees", "Electricity", "Water", "Rent", "Other"])
     amt = st.number_input("Amount", min_value=0.0, step=0.1)
     if st.button("Add Expense"):
-        new_row = pd.DataFrame([[date.today(), cat, amt]], columns=expenses.columns)
-        expenses = pd.concat([expenses, new_row], ignore_index=True)
-        save_data(purchases, sales, expenses)
-        st.success("Expense recorded.")
-    st.dataframe(expenses)
+        if amt > 0:
+            new_row = pd.DataFrame([[date.today(), cat, amt]], columns=st.session_state["expenses"].columns)
+            st.session_state["expenses"] = pd.concat([st.session_state["expenses"], new_row], ignore_index=True)
+            save_all()
+            st.success("Expense recorded.")
+        else:
+            st.warning("Amount must be greater than 0.")
+    st.dataframe(st.session_state["expenses"])
 
 # --- Reports Page ---
 else:
     st.header("Reports")
-    total_purchase = purchases["Total"].sum()
-    total_sales = sales["Total"].sum()
-    total_expenses = expenses["Amount"].sum()
+    total_purchase = st.session_state["purchases"]["Total"].sum()
+    total_sales = st.session_state["sales"]["Total"].sum()
+    total_expenses = st.session_state["expenses"]["Amount"].sum()
     profit = total_sales - total_purchase - total_expenses
 
-    st.metric("Total Purchases", f"${total_purchase:.2f}")
-    st.metric("Total Sales", f"${total_sales:.2f}")
-    st.metric("Total Expenses", f"${total_expenses:.2f}")
-    st.metric("Net Profit", f"${profit:.2f}")
+    col1, col2, col3, col4 = st.columns(4)
+    col1.metric("Total Purchases", f"${total_purchase:.2f}")
+    col2.metric("Total Sales", f"${total_sales:.2f}")
+    col3.metric("Total Expenses", f"${total_expenses:.2f}")
+    col4.metric("Net Profit", f"${profit:.2f}")
 
     st.subheader("Stock Summary")
-    bought = purchases.groupby("Item")["Quantity"].sum()
-    sold = sales.groupby("Item")["Quantity"].sum()
+    bought = st.session_state["purchases"].groupby("Item")["Quantity"].sum()
+    sold = st.session_state["sales"].groupby("Item")["Quantity"].sum()
     stock = (bought - sold).fillna(0)
-    st.dataframe(stock.reset_index().rename(columns={0: "Remaining"}))
+    st.dataframe(stock.reset_index().rename(columns={"Quantity": "Remaining"}))
 
+    st.download_button("Download Purchases CSV", st.session_state["purchases"].to_csv(index=False), "purchases.csv")
+    st.download_button("Download Sales CSV", st.session_state["sales"].to_csv(index=False), "sales.csv")
+    st.download_button("Download Expenses CSV", st.session_state["expenses"].to_csv(index=False), "expenses.csv")
